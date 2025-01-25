@@ -1,8 +1,8 @@
 let
-  lib = import ../lib;
-  version = "10.4.1";
+  lib = (import ../lib) { };
+  version = "11.3.2";
   cpu = 100;
-  mem = 200;
+  mem = 240;
   ports = {
     http = 8888;
     upDb = 5432;
@@ -20,20 +20,16 @@ lib.mkJob "grafana" {
   group."grafana" = {
     affinities = [{
       lTarget = "\${meta.controlPlane}";
-      operand = "is";
+      operand = "=";
       rTarget = "true";
-      weight = -50;
+      weight = -80;
     }];
     count = 2;
     network = {
+      inherit (lib.defaults) dns;
       mode = "bridge";
-      dns.servers = [
-        "10.10.13.1"
-        "10.10.12.1"
-        "10.10.11.1"
-      ];
       dynamicPorts = [
-        { label = "healthz"; }
+        { label = "healthz"; hostNetwork = "ts"; }
       ];
     };
 
@@ -73,9 +69,8 @@ lib.mkJob "grafana" {
         sidecarTask.resources = sidecarResources;
       };
 
-      check = {
+      check."healthz" = {
         expose = true;
-        name = "healthz";
         port = "healthz";
         type = "http";
         path = "/api/health";
@@ -121,6 +116,7 @@ lib.mkJob "grafana" {
         "GF_SERVER_SERVE_FROM_SUB_PATH" = true;
         "GF_SECURITY_ALLOW_EMBEDDING" = true;
         "GF_FEATURE_TOGGLES_ENABLE" = "traceToMetrics logsExploreTableVisualisation";
+        GF_INSTALL_PLUGINS = "https://storage.googleapis.com/integration-artifacts/grafana-lokiexplore-app/grafana-lokiexplore-app-latest.zip;grafana-lokiexplore-app, oci-metrics-datasource";
       };
 
       template."local/config.ini" = {
@@ -131,9 +127,9 @@ lib.mkJob "grafana" {
             type = "postgres"
             host = "${bind}:${toString ports.upDb}"
             user = "grafana"
-            ssl_mode = "verify-full"
-            ssl_sni = "roach-db.traefik"
-            servert_cert_name = "cockroachdb-2023-mar-20.roach-db.traefik"
+            ssl_mode = "verify-ca"
+            ssl_sni = "roach-db.tfk.nd"
+            servert_cert_name = "roach-db.tfk.nd"
             ca_cert_path = "/secrets/ca.crt"
             client_key_path = "/secrets/client.grafana.key"
             client_cert_path = "/secrets/client.grafana.crt"

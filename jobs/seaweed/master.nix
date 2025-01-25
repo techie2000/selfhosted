@@ -1,6 +1,6 @@
 let
-  lib = import ../lib;
-  version = "3.68";
+  lib = (import ../lib) { };
+  version = "3.80";
   cpu = 100;
   mem = 200;
   sidecarResources = with builtins; mapAttrs (_: ceil) {
@@ -14,7 +14,7 @@ let
     grpc = http + 10000;
   };
 
-  advertiseOf = node: "${lib.${node}.ip}:${toString ports.http}";
+  advertiseOf = node: "${node}.${lib.tailscaleDns}:${toString ports.http}";
 
   mkConfig = node: other1: other2: {
     name = "${node}-seaweed-master";
@@ -25,13 +25,15 @@ let
       rTarget = node;
     }];
     network = {
+      inherit (lib.defaults.dns) servers;
       mode = "bridge";
-      dynamicPorts = [{
-        label = "metrics";
-      }];
+      dynamicPorts = [
+        { label = "metrics"; hostNetwork = "ts"; }
+        { label = "health"; hostNetwork = "ts"; }
+      ];
       reservedPorts = [
-        { label = "http"; value = ports.http; }
-        { label = "grpc"; value = ports.grpc; }
+        { label = "http"; value = ports.http; hostNetwork = "ts"; }
+        { label = "grpc"; value = ports.grpc; hostNetwork = "ts"; }
       ];
     };
     service."seaweed-master-http" = {
@@ -53,7 +55,6 @@ let
         "traefik.consulcatalog.connect=true"
         "traefik.http.routers.seaweed-master.entrypoints=web,websecure"
         "traefik.http.routers.seaweed-master.tls=true"
-        "traefik.http.routers.seaweed-master.tls.certresolver=dcotta-vault"
       ];
     };
     service."seaweed-master-grpc" = {
@@ -68,13 +69,11 @@ let
         "traefik.consulcatalog.connect=true"
         "traefik.http.routers.seaweed-master-grpc.entrypoints=web,websecure"
         "traefik.http.routers.seaweed-master-grpc.tls=true"
-        "traefik.http.routers.seaweed-master-grpc.tls.certresolver=dcotta-vault"
         "traefik.http.services.seaweed-master-grpc.loadbalancer.server.scheme=h2c"
       ];
     };
     service."seaweed-${node}-master-grpc" = {
       portLabel = toString ports.grpc;
-      taskName = "roach";
       connect = {
         sidecarService.proxy = {
           upstream."tempo-otlp-grpc-mesh".localBindPort = 4322;
@@ -87,9 +86,8 @@ let
         sidecarTask.resources = sidecarResources // { cpu = builtins.ceil (cpu * 0.30); };
       };
     };
-    service. "seaweed-${node}-master-http" = {
+    service."seaweed-${node}-master-http" = {
       portLabel = toString ports.http;
-      taskName = "roach";
       connect = {
         sidecarService.proxy = {
           config = lib.mkEnvoyProxyConfig {
@@ -104,8 +102,21 @@ let
         "traefik.consulcatalog.connect=true"
         "traefik.http.routers.seaweed-master-http-${node}.entrypoints=web,websecure"
         "traefik.http.routers.seaweed-master-http-${node}.tls=true"
-        "traefik.http.routers.seaweed-master-http-${node}.tls.certresolver=dcotta-vault"
       ];
+      checks = [{
+        expose = true;
+        name = "health";
+        portLabel = "health";
+        type = "http";
+        path = "/";
+        interval = 10 * lib.seconds;
+        timeout = 3 * lib.seconds;
+        check_restart = {
+          limit = 3;
+          grace = "120s";
+          ignoreWarnings = false;
+        };
+      }];
     };
     service."seaweed-master-metrics" = rec {
       portLabel = toString ports.metrics;
@@ -137,7 +148,7 @@ let
         args = [
           "-logtostderr"
           "master"
-          "-ip=${lib.${node}.ip}"
+          "-ip=${node}.${lib.tailscaleDns}"
           "-ip.bind=0.0.0.0"
           #   "-mdir=/data"
           "-mdir=\${NOMAD_TASK_DIR}/master"
@@ -216,8 +227,7 @@ lib.mkJob "seaweed-master" {
   update = {
     maxParallel = 1;
     autoRevert = true;
-    autoPromote = true;
-    canary = 1;
+    canary = 0;
     stagger = 10 * lib.seconds;
   };
   group."miki-seaweed-master" = mkConfig "hez1" "hez2" "hez3";

@@ -19,6 +19,11 @@ job "mimir" {
   }
   group "mimir" {
     count = 1
+    affinity {
+      attribute = "${meta.controlPlane}"
+      value     = "true"
+      weight    = -50
+    }
     restart {
       attempts = 3
       interval = "5m"
@@ -34,18 +39,18 @@ job "mimir" {
       mode = "bridge"
       port "healthz" {
         to           = -1
-        host_network = "wg-mesh"
+        host_network = "ts"
       }
       port "metrics" {
         to           = -1
-        host_network = "wg-mesh"
+        host_network = "ts"
       }
       port "memberlist" {
-        host_network = "wg-mesh"
+        host_network = "ts"
         to           = 7946
       }
       port "grpc" {
-        host_network = "wg-mesh"
+        host_network = "ts"
       }
     }
     service {
@@ -69,7 +74,7 @@ job "mimir" {
         interval = "20s"
         timeout  = "5s"
         check_restart {
-          limit           = 3
+          limit           = 6
           grace           = "120s"
           ignore_warnings = false
         }
@@ -84,7 +89,7 @@ job "mimir" {
         timeout  = "5s"
         expose   = true
         check_restart {
-          limit           = 3
+          limit           = 6
           grace           = "120s"
           ignore_warnings = false
         }
@@ -112,7 +117,7 @@ job "mimir" {
         args  = [
           "-config.file",
           "/local/config.yaml",
-          "-target=all",
+          "-target=all,alertmanager",
           "-auth.multitenancy-enabled=false",
           // "-query-frontend.parallelize-shardable-queries=true",
           // "-query-frontend.query-sharding-total-shards=4",

@@ -1,12 +1,9 @@
-let lib = import ./lib; in
-{
-  job = lib.transformJob {
-    name = "whoami";
-    id = "whoami";
+{ util, ... }: {
+  job."whoami" = {
     group."whoami" = {
       network = {
         mode = "bridge";
-        port."http" = { };
+        port."http".hostNetwork = "ts";
       };
       service."whoami" = {
         tags = [
@@ -30,7 +27,7 @@ let lib = import ./lib; in
                   localBindPort = otlpPort;
                 }
               ];
-              config = lib.mkEnvoyProxyConfig {
+              config = util.mkEnvoyProxyConfig {
                 otlpService = "proxy-whoami";
                 otlpUpstreamPort = otlpPort;
               };
@@ -42,7 +39,7 @@ let lib = import ./lib; in
         driver = "docker";
 
         config = {
-          image = "traefik/whoami";
+          images = "traefik/whoami";
           ports = [ "http" ];
           args = [
             "--port=\${NOMAD_PORT_http}"

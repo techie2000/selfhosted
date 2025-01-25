@@ -1,6 +1,6 @@
 let
-  lib = import ./lib;
-  tag = "sha-148bf78";
+  lib = (import ./lib) { };
+  tag = "sha-b872ed2";
 in
 lib.mkJob "web-portfolio" {
 
@@ -17,7 +17,7 @@ lib.mkJob "web-portfolio" {
     count = 2;
     network = {
       mode = "bridge";
-      dynamicPorts = [{ label = "http"; }];
+      dynamicPorts = [{ label = "http"; hostNetwork = "ts"; }];
     };
 
     service."web-portfolio" = {

@@ -1,6 +1,6 @@
 job "seaweedfs-plugin" {
   datacenters = ["*"]
-  type        = "system"
+  type = "system"
   update {
     max_parallel = 1
     stagger      = "60s"
@@ -12,16 +12,15 @@ job "seaweedfs-plugin" {
     operator = "distinct_hosts"
     value    = true
   }
+  constraint {
+    attribute = "${meta.seaweedfs_volume}"
+    value     = true
+  }
 
   group "plugin" {
     network {
       dns {
-        servers = [
-          "10.10.0.1",
-          "10.10.11.1",
-          "10.10.12.1",
-          "10.10.13.1",
-        ]
+        servers = ["100.100.100.100"]
       }
     }
     ephemeral_disk {

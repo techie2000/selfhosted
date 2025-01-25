@@ -1,4 +1,5 @@
 .idea/
+.gcroots
 
 **/.DS_Store
 
@@ -20,3 +21,7 @@ terraform/vault/tmp
 **/*.secret.tfvars
 
 certs/mesh**
+
+result
+
+#services/lib/proto/**/**.pb.go.gcroots/

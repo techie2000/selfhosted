@@ -2,7 +2,6 @@
   imports = [
     ./hardware-configuration.nix
     ./nomad.nix
-    ./wg-easy.nix
     ./ipv6.nix
   ];
 
@@ -22,8 +21,7 @@
 
   networking.firewall.enable = true;
   networking.firewall = {
-    # WG whitelisted in lib/make-wireguard
-    allowedTCPPorts = [ 22 ];
+    #    allowedTCPPorts = [ 22 ];
     # for wg-ui VPN
     allowedUDPPorts = [ 51825 ];
   };

@@ -1,29 +1,21 @@
 job "prometheus" {
-
-
   group "monitoring" {
     count = 1
 
-    affinity {
-      attribute = "${node.meta.controlPlane}"
-      value     = "true"
-      weight    = -50
-    }
     constraint {
       attribute = "${attr.nomad.bridge.hairpin_mode}"
       value     = true
     }
 
     network {
-      mode = "bridge"
       dns {
-        servers = [
-          "10.10.11.1",
-          "10.10.12.1",
-          "10.10.13.1",
-        ]
+        servers = ["100.100.100.100"]
       }
-      port "health" { to = -1 }
+      mode = "bridge"
+      port "health" {
+        to = -1
+        host_network = "ts"
+      }
     }
 
     restart {
@@ -80,7 +72,6 @@ job "prometheus" {
         "traefik.http.routers.${NOMAD_GROUP_NAME}.entrypoints=web,websecure",
         "traefik.http.routers.${NOMAD_GROUP_NAME}.middlewares=vpn-whitelist@file",
         "traefik.http.routers.${NOMAD_GROUP_NAME}.tls=true",
-        "traefik.http.routers.${NOMAD_GROUP_NAME}.tls.certresolver=dcotta-vault"
       ]
     }
 
@@ -111,7 +102,7 @@ scrape_configs:
       format: ['prometheus']
 
     static_configs:
-      - labels: {'cluster': 'dcotta'}
+      - labels: {'cluster': 'default'}
 
     consul_sd_configs:
     - server: 'https://{{ env "NOMAD_IP_health" }}:8501' # well known consul https port
@@ -172,7 +163,7 @@ scrape_configs:
       action: drop
       regex: (.+)-sidecar-proxy
 
-    # Scrape only cokcorachdb
+    # Scrape only cockroachdb
     - source_labels: [__meta_consul_service]
       action: keep
       regex: roach-(.+)
@@ -211,6 +202,7 @@ scrape_configs:
   - job_name: 'consul_services'
     tls_config:
       insecure_skip_verify: true
+
     # Labels assigned to all metrics scraped from the targets.
     static_configs:
       - labels: {'cluster': 'dcotta'}
@@ -279,7 +271,10 @@ scrape_configs:
       - labels: {'cluster': 'dcotta'}
      
     nomad_sd_configs:
-    - server: 'https://miki.mesh.dcotta.eu:4646'
+    - server: 'https://hez1.golden-dace.ts.net:4646'
+      tls_config:
+        insecure_skip_verify: true
+    - server: 'https://hez2.golden-dace.ts.net:4646'
       tls_config:
         insecure_skip_verify: true
 
@@ -319,12 +314,21 @@ scrape_configs:
     tls_config:
      insecure_skip_verify: true
      
-    static_configs:
-     - targets: [
-      'hez1.mesh.dcotta.eu:8200',
-      'hez2.mesh.dcotta.eu:8200',
-      'hez3.mesh.dcotta.eu:8200',
-    ]
+    consul_sd_configs:
+    - server: 'https://{{ env "NOMAD_IP_health" }}:8501' # well known consul https port
+      tls_config:
+        insecure_skip_verify: true
+
+    relabel_configs:
+    - source_labels: [__meta_consul_service]
+      action: keep
+      regex: vault
+
+    - source_labels: [__meta_consul_address]
+      regex: (.+)
+      replacement: $${1}:8200
+      target_label: __address__
+
   - job_name: 'consul'
     metrics_path: "/v1/agent/metrics"
     scheme: https
@@ -332,13 +336,21 @@ scrape_configs:
       format: [ 'prometheus' ]
     tls_config:
      insecure_skip_verify: true
-     
-    static_configs:
-     - targets: [
-      'hez1.mesh.dcotta.eu:8501',
-      'hez2.mesh.dcotta.eu:8501',
-      'hez3.mesh.dcotta.eu:8501',
-    ]
+
+    consul_sd_configs:
+    - server: 'https://{{ env "NOMAD_IP_health" }}:8501' # well known consul https port
+      tls_config:
+        insecure_skip_verify: true
+
+    relabel_configs:
+    - source_labels: [__meta_consul_service]
+      action: keep
+      regex: consul
+
+    - source_labels: [__meta_consul_address]
+      regex: (.+)
+      replacement: $${1}:8501
+      target_label: __address__
 
 
 remote_write:
@@ -370,8 +382,8 @@ EOH
 
       resources {
         cpu        = 500
-        memory     = 300
-        memory_max = 400
+        memory     = 512
+        memory_max = 700
       }
     }
   }

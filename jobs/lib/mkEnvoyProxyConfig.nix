@@ -2,11 +2,10 @@
 , otlpUpstreamPort
 , otlpUpstreamHost ? "127.0.0.1"
 , protocol ? "http"
+, extra ? { inherit protocol; }
 ,
 }:
 {
-  inherit protocol;
-
   envoy_listener_tracing_json = builtins.toJSON {
     "@type" = "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager.Tracing";
     custom_tags = [
@@ -19,7 +18,7 @@
         "@type" = "type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig";
         grpc_service = {
           envoy_grpc.cluster_name = "opentelemetry_collector";
-          timeout = "0.500s";
+          timeout = "1.500s";
         };
         service_name = otlpService;
       };
@@ -64,4 +63,4 @@
         }
     }
   '';
-}
+} // extra

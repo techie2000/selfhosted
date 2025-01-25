@@ -2,14 +2,12 @@
   imports = [
     ./hardware-configuration.nix
     ./networking.nix # generated at runtime by nixos-infect
-
   ];
 
   boot.tmp.cleanOnBoot = true;
   zramSwap.enable = true;
   networking.domain = "";
   services.openssh.enable = true;
-  users.users.root.openssh.authorizedKeys.keys = [ ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHcVLH2EH/aAkul8rNWrDoBTjUTL3Y+6vvlVw5FSh8Gt nico.dc@outlook.com'' ];
 
 
   nomadNode = {
@@ -21,17 +19,9 @@
           interface           = "eth0"
           reserved_ports      = "22"
         }
-      }
-      server {
-        enabled          = true
-        bootstrap_expect = 3
-        server_join {
-          retry_join = [
-            "hez1.mesh.dcotta.eu",
-            "hez3.mesh.dcotta.eu",
-          ]
-          retry_max      = 3
-          retry_interval = "15s"
+        host_network "local-hetzner" {
+          interface           = "enp7s0"
+          reserved_ports      = "22"
         }
       }
     '';
@@ -45,7 +35,6 @@
     client.meta.controlPlane = "true";
   };
 
-  consulNode.server = true;
   virtualisation.docker.enable = true;
   networking.firewall.checkReversePath = false;
 

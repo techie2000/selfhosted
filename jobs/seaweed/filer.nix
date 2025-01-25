@@ -1,6 +1,7 @@
 let
-  lib = import ../lib;
-  version = "3.69";
+  name = "seaweed-filer";
+  lib = (import ../lib) { };
+  version = "3.80";
   cpu = 100;
   mem = 200;
   ports = {
@@ -18,10 +19,10 @@ let
   bind = "0.0.0.0";
   otlpPort = 9001;
 in
-lib.mkJob "seaweed-filer" {
-  datacenters = [ "dusseldorf-contabo" ];
+lib.mkJob name {
   update = {
     maxParallel = 1;
+    stagger = 20 * lib.seconds;
     autoRevert = true;
     autoPromote = true;
     canary = 1;
@@ -30,14 +31,16 @@ lib.mkJob "seaweed-filer" {
   group."seaweed-filer" = {
     count = 2;
     network = {
+      inherit (lib.defaults.dns) servers;
       mode = "bridge";
       dynamicPorts = [
-        { label = "metrics"; }
+        { label = "metrics"; hostNetwork = "ts"; }
+        { label = "health"; hostNetwork = "ts"; }
       ];
       reservedPorts = [
-        { label = "http"; value = ports.http; }
-        { label = "grpc"; value = ports.grpc; }
-        { label = "s3"; value = ports.s3; }
+        { label = "http"; value = ports.http; hostNetwork = "ts"; }
+        { label = "grpc"; value = ports.grpc; hostNetwork = "ts"; }
+        { label = "s3"; value = ports.s3; hostNetwork = "ts"; }
       ];
     };
 
@@ -59,31 +62,30 @@ lib.mkJob "seaweed-filer" {
       connect.sidecarTask.resources = sidecarResources;
       # TODO implement http healthcheck https://github.com/seaweedfs/seaweedfs/pull/4899/files
       port = toString ports.http;
-      check = {
-        name = "alive";
-        type = "tcp";
-        port = "http";
-        interval = "20s";
-        timeout = "2s";
-      };
+      checks = [{
+        expose = true;
+        name = "healthz";
+        path = "/healthz";
+        type = "http";
+        portLabel = "health";
+        interval = 20 * lib.seconds;
+        timeout = 2 * lib.seconds;
+        check_restart = {
+          limit = 3;
+          grace = "120s";
+          ignoreWarnings = false;
+        };
+      }];
       tags = [
         "traefik.enable=true"
         "traefik.consulcatalog.connect=true"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.entrypoints=web,websecure"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls=true"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls.certresolver=dcotta-vault"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.middlewares=mesh-whitelist@file"
       ];
     };
     service."seaweed-filer-grpc" = {
       port = toString ports.grpc;
-      check = {
-        name = "alive";
-        type = "tcp";
-        port = "grpc";
-        interval = "20s";
-        timeout = "2s";
-      };
       connect.sidecarService.proxy = {
         config = lib.mkEnvoyProxyConfig {
           otlpService = "proxy-seaweed-filer-grpc";
@@ -112,9 +114,10 @@ lib.mkJob "seaweed-filer" {
     service."seaweed-filer-s3" = {
       port = toString ports.s3;
       tags = [
-        "traefik.enable=false"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-s3.entrypoints=web,websecure"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-s3.middlewares=vpn-whitelist@file"
+        "traefik.enable=true"
+        "traefik.consulcatalog.connect=true"
+        "traefik.http.routers.${name}-s3.tls=true"
+        "traefik.http.routers.${name}-s3.entrypoints=web,websecure"
       ];
 
       connect.sidecarTask.resources = sidecarResources;
@@ -138,7 +141,7 @@ lib.mkJob "seaweed-filer" {
           "-ip.bind=${bind}"
           (
             with lib;
-            "-master=${hez1.ip}:9333,${hez2.ip}:9333,${hez3.ip}:9333"
+            "-master=hez1.${tailscaleDns}:9333,hez2.${tailscaleDns}:9333,hez3.${tailscaleDns}:9333"
           )
           "-port=${toString ports.http}"
           "-port.grpc=${toString ports.grpc}"

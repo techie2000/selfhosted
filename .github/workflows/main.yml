@@ -1,0 +1,168 @@
+name: main
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+
+env:
+  # Use docker.io for Docker Hub if empty
+  REGISTRY: ghcr.io
+  ATTIC_SERVER: "https://attic.tfk.nd/"
+  ATTIC_CACHE: "default"
+
+jobs:
+  populate-cache:
+    strategy:
+      matrix:
+        package:
+          # these have to be fully qualified nix flake paths
+          - .#packages.x86_64-linux.bws-get
+          - .#packages.x86_64-linux.nixmad
+          - "github:zhaofengli/colmena#defaultPackage.x86_64-linux"
+          - "github:Mic92/nix-fast-build/8e7c9d7#packages.x86_64-linux.default"
+        host:
+          - ubuntu-latest
+    #          - macos-latest
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build-env
+        name: Set up build env
+        with:
+          caCertificate: ${{ secrets.DCOTTA_ROOT_CA }}
+          tailscale_oauth_clientsecret: ${{ secrets.TAILSCALE_OAUTH_CLIENTSECRET }}
+      - name: Build package ${{ matrix.package }}
+        continue-on-error: false
+        run: |
+          nix-fast-build --eval-workers 1 --skip-cached --no-nom --attic-cache=default \
+            -f ${{ matrix.package }}
+
+  resolve-nodes:
+    runs-on: ubuntu-latest
+    outputs:
+      nodes: ${{ steps.list.outputs.nodes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v22
+        with:
+          github_access_token: '${{ github.token }}'
+      - name: List nodes
+        id: list
+        run: |
+          NODES=$(nix eval .#colmenaHive.nodes --json --apply builtins.attrNames | jq -c)
+          echo "nodes resolved:"
+          echo "$NODES"
+          echo "nodes=$NODES" >> "$GITHUB_OUTPUT"
+  
+  build-nixos-configs:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(needs.resolve-nodes.outputs.nodes) }}
+    needs: resolve-nodes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build-env
+        name: Set up build env
+        with:
+          caCertificate: ${{ secrets.DCOTTA_ROOT_CA }}
+          tailscale_oauth_clientsecret: ${{ secrets.TAILSCALE_OAUTH_CLIENTSECRET }}
+          aarch64LinuxSupport: true
+      - name: Build NixOS config for ${{ matrix.node }}
+        run: |
+          nix-fast-build --eval-workers 1 --skip-cached --no-nom --attic-cache=default \
+            -f .#colmenaHive.nodes.${{ matrix.node }}.config.system.build.toplevel
+
+  deploy-web:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup-build-env
+        name: Set up build env
+        with:
+          caCertificate: ${{ secrets.DCOTTA_ROOT_CA }}
+          tailscale_oauth_clientsecret: ${{ secrets.TAILSCALE_OAUTH_CLIENTSECRET }}
+
+      - name: Import Secrets
+        id: secrets
+        uses: hashicorp/vault-action@v2
+        with:
+          url: https://vault.dcotta.com:8200
+          role: actions-ro
+          path: jwt-github
+          method: jwt
+          jwtGithubAudience: sigstore
+          caCertificate: ${{ secrets.DCOTTA_ROOT_CA }}
+          secrets: |
+            secret/data/github-actions/cloudflare/workers_token value | CF_TOKEN ;
+            secret/data/github-actions/cloudflare/workers_token accountId  | CF_ACCOUNT_ID ;
+
+      - name: Build web portfolio
+        run: |
+          nix build -L github:cottand/web-portfolio#static
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ steps.secrets.outputs.CF_TOKEN }}
+          accountId: ${{ steps.secrets.outputs.CF_ACCOUNT_ID }}
+          command: pages deploy ./result/srv --project-name=nico-dcotta-com
+
+      - name: Cache results
+        continue-on-error: true
+        run: |
+          attic push "$ATTIC_CACHE" ./result
+
+
+  build-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup-build-env
+        name: Set up build env
+        with:
+          caCertificate: ${{ secrets.DCOTTA_ROOT_CA }}
+          tailscale_oauth_clientsecret: ${{ secrets.TAILSCALE_OAUTH_CLIENTSECRET }}
+
+      - name: Build services image
+        run: |
+          nix build -L .#scripts.all-images
+
+      - name: Install skopeo
+        run: |
+          nix profile install nixpkgs#skopeo
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login -u ${{ github.actor }} --password-stdin https://ghcr.io
+
+      - name: Push all images
+        shell: python
+        run: |
+          import os
+          import json
+          
+          images = os.popen("jq < $(nix build .#scripts.all-images --print-out-paths)").read()
+          git_sha = os.popen('git rev-parse --short "$GITHUB_SHA"').read().strip()
+          
+          for repo, path in json.loads(images).items():
+            dest_repo = f'docker://ghcr.io/cottand/selfhosted/{repo}:{git_sha}'
+            print(os.popen(f'skopeo --insecure-policy copy "docker-archive:{path}" "{dest_repo}"').read())
+
+      - name: Cache results
+        continue-on-error: true
+        run: |
+          attic push "$ATTIC_CACHE" result*
+

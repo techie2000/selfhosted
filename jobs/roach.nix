@@ -1,17 +1,15 @@
 let
-  version = "v23.1.22";
+  lib = (import ./lib) { };
+  version = "latest-v24.3";
   cache = "70MB";
   maxSqlMem = "${toString (mem * 0.5)}MB";
-  cpu = 420;
-  mem = 600;
+  cpu = 1200;
+  mem = 1500;
   rpcPort = 26257;
   webPort = 8080;
   sqlPort = 5432;
   bind = "0.0.0.0";
   binds = {
-    miki = 2801;
-    maco = 2802;
-    cosmo = 2803;
     hez1 = 2801;
     hez2 = 2801;
     hez3 = 2801;
@@ -22,7 +20,14 @@ let
     memoryMaxMB = 0.10 * mem + 100;
   };
   seconds = 1000000000;
-  advertiseOf = node: "${node}.mesh.dcotta.eu:${toString binds.${node}}";
+  advertiseOf = {
+    hez1 = "10.0.1.1:2801";
+    #    hez1 = "hez1.${lib.tailscaleDns}:2801";
+    #    hez2 = "hez2.${lib.tailscaleDns}:2801";
+    hez2 = "10.0.1.2:2801";
+    hez3 = "10.0.1.3:2801";
+    #    hez3 = "hez3.${lib.tailscaleDns}:2801";
+  };
   certsForUser = name: [
     {
       destPath = "/secrets/client.${name}.key";
@@ -56,12 +61,15 @@ let
       source = "roach";
     };
     networks = [{
+      inherit (lib.defaults.dns) servers;
       mode = "bridge";
       dynamicPorts = [
-        { label = "metrics"; to = webPort; }
+        { label = "metrics"; to = webPort; hostNetwork = "ts"; }
+        { label = "health"; hostNetwork = "ts"; }
       ];
       reservedPorts = [
-        { label = "rpc"; value = binds.${node}; }
+        { label = "rpc"; value = binds.${node}; hostNetwork = "ts"; }
+        { label = "rpc-local"; value = binds.${node}; hostNetwork = "local-hetzner"; }
       ];
     }];
     services = [
@@ -80,6 +88,30 @@ let
           "traefik.tcp.routers.roach-db.rule=HostSNI(`roach-db.traefik`) || HostSNI(`roach-db.tfk.nd`)"
           "traefik.tcp.routers.roach-db.entrypoints=sql"
         ];
+        checks = [
+        {
+          name = "health-ready";
+          path = "/health?ready=1";
+          tlsSkipVerify = true;
+          type = "http";
+          portLabel = "metrics";
+          interval = 5 * lib.seconds;
+          timeout = 1 * lib.seconds;
+          # we want nomad to ignore this, it's traefik
+          # that should respect the check
+          onUpdate = "ignore";
+        }
+        {
+          name = "health";
+          path = "/health";
+          tlsSkipVerify = true;
+          type = "http";
+          portLabel = "metrics";
+          interval = 5 * lib.seconds;
+          timeout = 1 * lib.seconds;
+          onUpdate = "require_healthy";
+        }
+        ];
       }
       {
         name = "roach-web";
@@ -92,9 +124,10 @@ let
         tags = [
           "traefik.enable=true"
           "traefik.consulcatalog.connect=true"
-          "traefik.tcp.routers.roach-web.entrypoints=web,websecure"
           "traefik.tcp.routers.roach-web.tls.passthrough=true"
           "traefik.tcp.routers.roach-web.rule=HostSNI(`roach-web.traefik`) || HostSNI(`roach-web.tfk.nd`)"
+          "traefik.tcp.routers.roach-web.entrypoints=web,websecure"
+
         ];
       }
       {
@@ -131,8 +164,6 @@ let
         changeMode = "restart";
         name = "roach";
         TTL = 3600 * seconds;
-        # "Env": true
-        # "File": true,
       }];
       volumeMounts = [{
         volume = "roach";
@@ -144,9 +175,9 @@ let
         image = "cockroachdb/cockroach:${version}";
         args = [
           "start"
-          "--advertise-addr=${advertiseOf node}"
+          "--advertise-addr=${advertiseOf.${node}}"
           # peers must match constraint above
-          "--join=${builtins.concatStringsSep "," (map advertiseOf peers)}"
+          "--join=${builtins.concatStringsSep "," (map (p: advertiseOf.${p}) peers)}"
           "--listen-addr=${bind}:${toString binds.${node}}"
           "--cache=${cache}"
           "--max-sql-memory=${maxSqlMem}"
@@ -192,10 +223,18 @@ let
 in
 {
   job = {
+    ui = {
+      description = "Distributed HA pSQL-like DB";
+      links = [
+        { label = "Grafana for Job"; url = "https://grafana.tfk.nd/d/de0ri7g2kukn4a/nomad-job?var-client=All&var-job=roach&var-group=All&var-task=All&var-alloc_id=All"; }
+        { label = "Roach UI"; url = "https://roach-web.tfk.nd"; }
+        { label = "Roach SQL Grafana"; url = "https://grafana.tfk.nd/d/crdb-console-sql/roach-sql?orgId=1&refresh=30s"; }
+      ];
+    };
     name = "roach";
     id = "roach";
     datacenters = [ "*" ];
-    updatePolicy = {
+    update = {
       maxParallel = 1;
       stagger = 12 * seconds;
     };
@@ -204,6 +243,8 @@ in
       (mkConfig "hez1" [ "hez2" "hez3" ])
       (mkConfig "hez2" [ "hez1" "hez3" ])
       (mkConfig "hez3" [ "hez1" "hez2" ])
+
+      # add nodes here (miki?) to perform DB node migrations as you need 4 nodes to decommission
     ];
   };
 }

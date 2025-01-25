@@ -1,5 +1,5 @@
 let
-  lib = import ./lib;
+  lib = (import ./lib) { };
   otlpPort = 9001;
 in
 lib.mkJob "debug" {
@@ -9,7 +9,7 @@ lib.mkJob "debug" {
       mode = "bridge";
       port."web" = {
         to = 80;
-        hostNetwork = "wg-mesh";
+        hostNetwork = "ts";
       };
     };
 

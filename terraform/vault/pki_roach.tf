@@ -7,10 +7,10 @@ resource "vault_pki_secret_backend_role" "intermediate_role-roach-node" {
   allow_ip_sans      = true
   key_type           = "rsa"
   key_bits           = 4096
-  allowed_domains    = ["roach-db.traefik", "roach-web.traefik", "node", "mesh.dcotta.eu"]
+  allowed_domains    = ["roach-db.tfk.nd", "roach-web.tfk.nd", "node", local.tsDomain]
   allow_subdomains   = true
   allow_bare_domains = true
-  allow_localhost    = true
+  allow_localhost    = false
   allow_wildcard_certificates = true
 }
 
@@ -19,18 +19,18 @@ resource "vault_pki_secret_backend_cert" "cockroachdb" {
   issuer_ref  = vault_pki_secret_backend_issuer.intermediate.issuer_ref
   backend     = vault_pki_secret_backend_role.intermediate_role-roach-node.backend
   name        = vault_pki_secret_backend_role.intermediate_role-roach-node.name
-  common_name = "cockroachdb-2024-jun-14.roach-db.traefik"
+  common_name = "cockroachdb-2024-dec-08.roach-db.tfk.nd"
   alt_names   = [
-    "*.mesh.dcotta.eu",
-    "roach-web.traefik",
+    "*.${local.tsDomain}",
+    "roach-web.tfk.nd",
     "node",
-    "roach-db.traefik",
-    "localhost",
+    "roach-db.tfk.nd",
   ]
 
-
   ip_sans = [
-    "127.0.0.1",
+    "10.0.1.1",
+    "10.0.1.2",
+    "10.0.1.3",
   ]
 
   ttl    = 42200000

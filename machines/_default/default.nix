@@ -2,14 +2,15 @@
 
   imports = [
     ./common_config.nix
+    ./tailscale.nix
   ];
 
-  networking.hostName = lib.mkDefault name;
+  networking.hostName = name;
 
   deployment = {
     replaceUnknownProfiles = lib.mkDefault true;
     buildOnTarget = lib.mkDefault false;
-    targetHost = lib.mkDefault meta.ip.mesh."${name}";
+    targetHost = lib.mkDefault "${name}.golden-dace.ts.net";
   };
 
   home-manager = {
@@ -25,13 +26,5 @@
     };
   };
 
-  # mesh VPN
-  custom.wireguard = lib.mkDefault {
-    "wg-mesh" = {
-      enable = true;
-      confPath = secretPath + "wg-mesh/${name}.conf";
-      port = 55820;
-    };
-  };
   consulNode.enable = lib.mkDefault true;
 }

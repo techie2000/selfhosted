@@ -1,5 +1,8 @@
 let
-  lib = import ./lib;
+  lib = (import ./lib) { };
+  # before changing this, ame sure you implement running
+  # db migrations
+  # https://github.com/zhaofengli/attic/blob/47752427561f1c34debb16728a210d378f0ece36/server/src/main.rs#L74
   version = "717cc95983cdc357bc347d70be20ced21f935843";
   cpu = 120;
   mem = 500;
@@ -8,80 +11,47 @@ let
     upDb = 5432;
     upS3 = 3333;
   };
-  sidecarResources = with builtins; mapAttrs (_: ceil) {
-    cpu = 0.20 * cpu;
-    memoryMB = 0.25 * mem;
-    memoryMaxMB = 0.25 * mem + 100;
-  };
   otlpPort = 9001;
   bind = lib.localhost;
   kiB = 1024;
-  chunkFactor = 2;
-in
-lib.mkJob "attic" {
-  datacenters = [ "dusseldorf-contabo" ];
-  update = {
-    maxParallel = 1;
-    autoRevert = true;
-    autoPromote = true;
-    canary = 1;
-  };
+  chunkFactor = 4;
 
-  group."attic" = {
-    count = 1;
+  mkGroup = { mode, count, resources, service }: {
+    inherit count service;
+    update = {
+      maxParallel = 1;
+      autoRevert = true;
+      autoPromote = true;
+      canary = 1;
+    };
+
     network = {
       mode = "bridge";
       dynamicPorts = [
-        { label = "health"; }
+        { label = "health"; hostNetwork = "ts"; }
       ];
-      reservedPorts = [
-      ];
+      reservedPorts = [ ];
     };
+    volumes = lib.caCertificates.volume;
 
-    service."attic" = {
-      connect.sidecarService = {
-        proxy = {
-          upstream."tempo-otlp-grpc-mesh".localBindPort = otlpPort;
-          upstream."roach-db".localBindPort = ports.upDb;
-          upstream."seaweed-filer-s3".localBindPort = ports.upS3;
 
-          config = lib.mkEnvoyProxyConfig {
-            otlpService = "proxy-attic-http";
-            otlpUpstreamPort = otlpPort;
-            protocol = "http";
-          };
-        };
-      };
-      connect.sidecarTask.resources = sidecarResources;
-      # TODO implement http healthcheck
-      port = toString ports.http;
-      check = {
-        name = "alive";
-        type = "tcp";
-        port = "health";
-        interval = "20s";
-        timeout = "2s";
-      };
-      tags = [
-        "traefik.enable=true"
-        "traefik.consulcatalog.connect=true"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.entrypoints=web,websecure"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls=true"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.middlewares=mesh-whitelist@file"
-      ];
-    };
-    task."attic" = {
+    task."attic-${mode}" = {
+      actions = [{
+        name = "collect-garbage";
+        command = "atticd";
+        args = [ "-f" "/local/config.toml" "--mode" "garbage-collector-once" ];
+      }];
       driver = "docker";
       vault = { };
 
       config = {
         image = "ghcr.io/zhaofengli/attic:${version}";
-        # ports = ["http" "grpc", "metrics", "webdav"];
         args = [
           "--config"
           "/local/config.toml"
           "--listen"
           "${bind}:${toString ports.http}"
+          "--mode=${mode}"
         ];
       };
       resources = {
@@ -89,10 +59,12 @@ lib.mkJob "attic" {
         memoryMb = mem;
         memoryMaxMb = builtins.ceil (2 * mem);
       };
+      # volume-mounted by default by mkjob
+      env."SSL_CERT_FILE" = "/etc/ssl/certs/ca-bundle.crt";
+
       template."local/config.toml" = {
         changeMode = "restart";
         embeddedTmpl = ''
-          # Socket address to listen on
           listen = "${bind}:${toString ports.http}"
 
           # Allowed `Host` headers
@@ -117,20 +89,10 @@ lib.mkJob "attic" {
           # removed from the database. Note that soft-deleted caches cannot
           # have their names reused as long as the original database records
           # are there.
-          #soft-delete-caches = false
-
-          # Whether to require fully uploading a NAR if it exists in the global cache.
-          #
-          # If set to false, simply knowing the NAR hash is enough for
-          # an uploader to gain access to an existing NAR in the global
-          # cache.
-          #require-proof-of-possession = true
+          soft-delete-caches = false
 
           # JWT signing token
-          #
-          # Set this to the Base64 encoding of some random data.
-          # You can also set it via the `ATTIC_SERVER_TOKEN_HS256_SECRET_BASE64` environment
-          # variable.
+          # Set this to the Base64 encoding of some random data
           token-hs256-secret-base64 = "{{with secret "secret/data/nomad/job/attic/jwt_signer"}}{{.Data.data.value}}{{end}}"
 
           # Database connection
@@ -138,23 +100,17 @@ lib.mkJob "attic" {
           # Connection URL
           #
           # For production use it's recommended to use PostgreSQL.
+          # tx is read committed set in DB itself
           url = "postgresql://attic:{{with secret "secret/data/nomad/job/attic/db"}}{{.Data.data.password}}{{end}}@localhost:${toString ports.upDb}/attic?options=-c default_int_size=4"
 
           # Whether to enable sending on periodic heartbeat queries
           #
           # If enabled, a heartbeat query will be sent every minute
-          #heartbeat = true
+          heartbeat = true
 
           # File storage configuration
           [storage]
-          # Storage type
-          #
-          # Can be "local" or "s3".
           type = "s3"
-
-          # ## Local storage
-          # The directory to store all files under
-          #path = "/local/share/attic/storage"
 
           # ## S3 Storage (set type to "s3" and uncomment below)
           # The AWS region
@@ -162,23 +118,15 @@ lib.mkJob "attic" {
 
           # The name of the bucket
           bucket = "attic"
+          #endpoint = "http://localhost:${toString ports.upS3}"
+          endpoint = "https://seaweed-filer-s3.tfk.nd"
 
-          # Custom S3 endpoint
-          #
-          # Set this if you are using an S3-compatible object storage (e.g., Minio).
-          endpoint = "http://localhost:${toString ports.upS3}"
-          #endpoint = "http://10.10.0.1:13210"
-
-          # Credentials
-          #
           # If unset, the credentials are read from the `AWS_ACCESS_KEY_ID` and
           # `AWS_SECRET_ACCESS_KEY` environment variables.
           [storage.credentials]
             access_key_id = ""
             secret_access_key = ""
 
-          # Data chunking
-          #
           # Warning: If you change any of the values here, it will be
           # difficult to reuse existing chunks for newly-uploaded NARs
           # since the cutpoints will be different. As a result, the
@@ -213,20 +161,90 @@ lib.mkJob "attic" {
           [garbage-collection]
           # The frequency to run garbage collection at
           #
-          # By default it's 12 hours. You can use natural language
-          # to specify the interval, like "1 day".
-          #
           # If zero, automatic garbage collection is disabled, but
           # it can still be run manually with `atticd --mode garbage-collector-once`.
           interval = "12 hours"
+          #interval = "1 minute"
 
-          # Default retention period
-          #
           # Zero (default) means time-based garbage-collection is
           # disabled by default. You can enable it on a per-cache basis.
           default-retention-period = "6 months"
+          #default-retention-period = "1 minute"
         '';
       };
+      volumeMounts = [ lib.caCertificates.volumeMount ];
+    };
+  };
+in
+lib.mkJob "attic" {
+  group."attic-api" = mkGroup rec {
+    mode = "api-server";
+    count = 2;
+    resources = {
+      cpu = 150;
+      memoryMB = 500;
+      memoryMaxMB = 1000;
+    };
+    service."attic" = {
+      connect.sidecarService = {
+        proxy = {
+          upstream."tempo-otlp-grpc-mesh".localBindPort = otlpPort;
+          upstream."roach-db".localBindPort = ports.upDb;
+
+          config = lib.mkEnvoyProxyConfig {
+            otlpService = "proxy-attic-http";
+            otlpUpstreamPort = otlpPort;
+            protocol = "http";
+          };
+        };
+      };
+      connect.sidecarTask.resources = lib.mkResourcesWithFactor 0.15 resources;
+      port = toString ports.http;
+      checks = [{
+        expose = true;
+        name = "healthcheck";
+        portLabel = "health";
+        type = "http";
+        path = "/";
+        interval = 30 * lib.seconds;
+        timeout = 10 * lib.seconds;
+        checkRestart = {
+          limit = 3;
+          grace = 120 * lib.seconds;
+          ignoreWarnings = false;
+        };
+      }];
+      tags = [
+        "traefik.enable=true"
+        "traefik.consulcatalog.connect=true"
+        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.entrypoints=web,websecure"
+        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls=true"
+      ];
+    };
+  };
+  group."attic-gc" = mkGroup rec {
+    mode = "garbage-collector";
+    count = 1;
+    resources = {
+      cpu = 60;
+      memoryMB = 150;
+      memoryMaxMB = 1000;
+    };
+    service."attic-gc" = {
+      connect.sidecarService = {
+        proxy = {
+          upstream."tempo-otlp-grpc-mesh".localBindPort = otlpPort;
+          upstream."roach-db".localBindPort = ports.upDb;
+
+          config = lib.mkEnvoyProxyConfig {
+            otlpService = "proxy-attic-gc-http";
+            otlpUpstreamPort = otlpPort;
+            protocol = "http";
+          };
+        };
+      };
+      connect.sidecarTask.resources = lib.mkResourcesWithFactor 0.15 resources;
+      port = toString ports.http;
     };
   };
 }

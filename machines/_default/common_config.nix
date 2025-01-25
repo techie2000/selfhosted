@@ -1,10 +1,12 @@
-{ pkgs, lib, flakeInputs, ... }:
+{ pkgs, config, lib, flakeInputs, ... }:
 {
 
   security.pki.certificateFiles = [
-    "${flakeInputs.self}/certs/root_2024_ca.crt"
+    flakeInputs.self.rootCa
   ];
 
+  boot.tmp.cleanOnBoot = true;
+  zramSwap.enable = true;
 
   nix = {
     settings.experimental-features = [ "nix-command" "flakes" ];
@@ -26,11 +28,12 @@
     shell = pkgs.fish;
   };
 
-  # noop, but here for future reference in case I want to do binary caches again
-  cottand.seaweedBinaryCache = {
-    uploadPostBuild = false;
-    useSubstituter = false;
-    cacheUrl = "s3://nix-cache?profile=cache-upload&endpoint=10.10.0.1:13210&scheme=http";
+  users.users.nico = {
+    isNormalUser = true;
+    description = "nico";
+    extraGroups = [ "wheel" ];
+    shell = pkgs.fish;
+    hashedPasswordFile = "";
   };
 
   swapDevices = [{
@@ -39,16 +42,9 @@
   }];
 
   services.openssh.enable = true;
+  services.openssh.openFirewall = false;
+  services.openssh.settings.PasswordAuthentication = false;
   services.sshguard.enable = true;
-  networking.enableIPv6 = true;
-  programs.zsh.enable = true;
-
-  # Enable Oh-my-zsh
-  programs.zsh.ohMyZsh = {
-    enable = true;
-    theme = "fishy";
-    plugins = [ "git" "sudo" "docker" "systemadmin" ];
-  };
 
   users.users."cottand".openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGes99PbsDcHDl3Jwg4GYqYRkzd6tZPH4WX4/ThP//BN"
@@ -67,9 +63,7 @@
   ];
 
   environment.systemPackages = with pkgs; [
-    wireguard-tools
-    python3 # required for sshuttle
-    seaweedfs # makes 'weed' bin available
+    #python3 # required for sshuttle
     pciutils # for setpci, lspci
     dig
     iw
@@ -78,28 +72,33 @@
     s-tui # power top
     nmap
     traceroute
-
-    vault-bin # for retrieving secrets
   ];
 
   # Set your time zone.
-  time.timeZone = lib.mkDefault "Europe/London";
-  networking.timeServers = [ "time.google.com" ];
+  time.timeZone = "UTC";
+
+  networking = {
+    enableIPv6 = true; # oci nodes do not have IPv6
+    timeServers = [ "time.google.com" ];
+    firewall.checkReversePath = false;
+  };
+  services.chrony.enable = true;
+
 
   # Select internationalisation properties.
-  i18n.defaultLocale = "en_GB.UTF-8";
+  #  i18n.defaultLocale = "en_GB.UTF-8";
 
-  i18n.extraLocaleSettings = {
-    LC_ADDRESS = "en_GB.UTF-8";
-    LC_IDENTIFICATION = "en_GB.UTF-8";
-    LC_MEASUREMENT = "en_GB.UTF-8";
-    LC_MONETARY = "en_GB.UTF-8";
-    LC_NAME = "en_GB.UTF-8";
-    LC_NUMERIC = "en_GB.UTF-8";
-    LC_PAPER = "en_GB.UTF-8";
-    LC_TELEPHONE = "en_GB.UTF-8";
-    LC_TIME = "en_GB.UTF-8";
-  };
+  #  i18n.extraLocaleSettings = {
+  #    LC_ADDRESS = "en_GB.UTF-8";
+  #    LC_IDENTIFICATION = "en_GB.UTF-8";
+  #    LC_MEASUREMENT = "en_GB.UTF-8";
+  #    LC_MONETARY = "en_GB.UTF-8";
+  #    LC_NAME = "en_GB.UTF-8";
+  #    LC_NUMERIC = "en_GB.UTF-8";
+  #    LC_PAPER = "en_GB.UTF-8";
+  #    LC_TELEPHONE = "en_GB.UTF-8";
+  #    LC_TIME = "en_GB.UTF-8";
+  #  };
 
   # Configure console keymap
   console.keyMap = "uk";

@@ -1,8 +1,15 @@
 job "whoami" {
+  affinity {
+    attribute = "${meta.controlPlane}"
+    value     = "true"
+    weight    = -70
+  }
   group "whoami" {
+    count = 1
     network {
       mode = "bridge"
       port "http" {
+        host_network = "ts-mesh"
       }
     }
       service {

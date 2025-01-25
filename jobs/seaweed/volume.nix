@@ -1,6 +1,8 @@
 # modified original from https://github.com/watsonian/seaweedfs-nomad
 let
-  lib = import ./../lib;
+  lib = (import ./../lib) {};
+
+  version = "3.80";
 
   ports = {
     http = 7002;
@@ -37,13 +39,15 @@ lib.mkJob "seaweed-volume" {
     };
 
     network = {
+      inherit (lib.defaults.dns) servers;
       mode = "bridge";
       dynamicPorts = [
-        { label = "metrics"; }
+        { label = "metrics"; hostNetwork = "ts"; }
+        { label = "health"; hostNetwork = "ts"; }
       ];
       reservedPorts = [
-        { label = "http"; value = ports.http; }
-        { label = "grpc"; value = ports.grpc; }
+        { label = "http"; value = ports.http;hostNetwork = "ts"; }
+        { label = "grpc"; value = ports.grpc;hostNetwork = "ts"; }
       ];
     };
 
@@ -71,14 +75,12 @@ lib.mkJob "seaweed-volume" {
         # load-balanced as usual
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.entrypoints=web,websecure"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls=true"
-        "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.tls.certresolver=dcotta-vault"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.middlewares=mesh-whitelist@file"
         "traefik.http.routers.\${NOMAD_GROUP_NAME}-http.rule=Host(`seaweed-volume-http.traefik`) && PathPrefix(`/seaweedfsstatic`)"
 
         # node specific
         "traefik.http.routers.${router}.entrypoints=web,websecure"
         "traefik.http.routers.${router}.tls=true"
-        "traefik.http.routers.${router}.tls.certresolver=dcotta-vault"
         "traefik.http.routers.${router}.middlewares=mesh-whitelist@file,${router}-stripprefix"
         "traefik.http.routers.${router}.rule=Host(`seaweed-volume-http.traefik`) && PathPrefix(`/\${node.unique.name}`)"
         "traefik.http.middlewares.${router}-stripprefix.stripprefix.prefixes=/\${node.unique.name}"
@@ -91,20 +93,20 @@ lib.mkJob "seaweed-volume" {
         "traefik.http.routers.${router}-redirect.rule=Host(`seaweed-volume-http.traefik`) && PathPrefix(`/\${node.unique.name}`)"
 
       ];
-      check = {
+      checks = [{
         expose = true;
         name = "healthz";
-        port = "http";
+        portLabel = "health";
         type = "http";
         path = "/status";
-        interval = "20s";
-        timeout = "5s";
+        interval = 15 * lib.seconds;
+        timeout = 3 * lib.seconds;
         check_restart = {
           limit = 3;
           grace = "120s";
           ignoreWarnings = false;
         };
-      };
+      }];
     };
 
     service."seaweed-volume-metrics" = rec {
@@ -159,7 +161,7 @@ lib.mkJob "seaweed-volume" {
         memoryMaxMB = builtins.ceil (mem * 2.5);
       };
       config = {
-        image = "chrislusf/seaweedfs:3.69";
+        image = "chrislusf/seaweedfs:${version}";
 
         args = [
           "-logtostderr"
@@ -167,7 +169,7 @@ lib.mkJob "seaweed-volume" {
           # from master DNS and well-known ports so that job is not reset
           (
             with lib;
-            "-mserver=${hez1.ip}:9333,${hez2.ip}:9333,${hez3.ip}:9333"
+            "-mserver=hez1.${tailscaleDns}:9333,hez2.${tailscaleDns}:9333,hez3.${tailscaleDns}:9333"
           )
           "-dir=/volume"
           "-max=0"

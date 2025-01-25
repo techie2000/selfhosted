@@ -19,17 +19,9 @@
           interface           = "eth0"
           reserved_ports      = "22"
         }
-      }
-      server {
-        enabled          = true
-        bootstrap_expect = 3
-        server_join {
-          retry_join = [
-            "hez2.mesh.dcotta.eu",
-            "hez3.mesh.dcotta.eu",
-          ]
-          retry_max      = 3
-          retry_interval = "15s"
+        host_network "local-hetzner" {
+          interface           = "enp7s0"
+          reserved_ports      = "22"
         }
       }
     '';
@@ -47,7 +39,6 @@
     client.meta.controlPlane = "true";
   };
 
-  consulNode.server = true;
   virtualisation.docker.enable = true;
   networking.firewall.checkReversePath = false;
 

@@ -1,31 +1,25 @@
-inputs@{ self, nixpkgs, cottand, home-manager, utils, nixpkgs-master, attic, overlays, ... }:
+inputs@{ self, srvos, nixpkgs, cottand, home-manager, utils, attic, overlays, ... }:
 let
   secretPath = "/Users/nico/dev/cottand/selfhosted/secret/";
+
+  mkNodePool = { names, module, ... }: builtins.listToAttrs (builtins.map
+    (name: {
+      inherit name;
+      value = module;
+    })
+    names);
 in
 {
   meta = {
     nixpkgs = nixpkgs.legacyPackages.x86_64-linux;
     specialArgs.secretPath = secretPath;
     specialArgs.flakeInputs = inputs;
-    specialArgs.meta.ip.mesh = {
-      cosmo = "10.10.0.1";
-      maco = "10.10.2.1";
-      ari = "10.10.3.1";
-      miki = "10.10.4.1";
-      xps2 = "10.10.6.1";
-      bianco = "10.10.0.2";
-
-      hez1 = "10.10.11.1";
-      hez2 = "10.10.12.1";
-      hez3 = "10.10.13.1";
-    };
   };
 
-  defaults = { pkgs, lib, name, nodes, meta, ... }: {
+  defaults = { pkgs, lib, name, nodes, meta, config, ... }: {
     imports = [
-      ./machines/${name}/definition.nix
       ./machines/_default
-      ./modules
+      ./machines/modules
       home-manager.nixosModules.home-manager
       cottand.nixosModules.seaweedBinaryCache
       cottand.nixosModules.dcottaRootCa
@@ -35,54 +29,67 @@ in
       system = lib.mkDefault "x86_64-linux";
       config.allowUnfree = true;
     };
+    deployment.tags = [ config.nixpkgs.system ];
   };
 
   cosmo = { name, nodes, ... }: {
-    deployment.buildOnTarget = false;
-    deployment.targetHost = "${name}.vps.dcotta.eu";
-    deployment.tags = [ "contabo" "nomad-server" "vault" ];
+    imports = [ ./machines/${name}/definition.nix ];
+    deployment.tags = [ "contabo" "nomad-server" ];
   };
 
   miki = { name, nodes, lib, ... }: {
-    deployment.targetHost = "${name}.mesh.dcotta.eu";
-    deployment.tags = [ "contabo" "nomad-server" "vault" ];
-  };
-
-  maco = { name, nodes, ... }: {
-    deployment.tags = [ "contabo" "nomad-server" "vault" ];
-    deployment.targetHost = "${name}.vps.dcotta.eu";
+    imports = [ ./machines/${name}/definition.nix ];
+    deployment.tags = [ "contabo" "nomad-server" ];
   };
 
   ari = { name, nodes, ... }: {
-    networking.hostName = name;
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "local" "nomad-client" ];
   };
 
   xps2 = { name, nodes, ... }: {
-    networking.hostName = name;
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "local" "nomad-client" ];
   };
 
   bianco = { name, nodes, ... }: {
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "madrid" "nomad-client" ];
   };
 
   hez1 = { name, nodes, ... }: {
-    vaultNode.enable = true;
-    deployment.buildOnTarget = false;
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "hetzner" ];
-    deployment.targetHost = "${name}.vps.dcotta.com";
   };
   hez2 = { name, nodes, ... }: {
-    vaultNode.enable = true;
-    deployment.buildOnTarget = false;
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "hetzner" ];
-    deployment.targetHost = "${name}.vps.dcotta.com";
   };
   hez3 = { name, nodes, ... }: {
-    vaultNode.enable = true;
-    deployment.buildOnTarget = false;
+    imports = [ ./machines/${name}/definition.nix ];
     deployment.tags = [ "hetzner" ];
-    deployment.targetHost = "${name}.vps.dcotta.com";
+  };
+  macMini1 = { name, nodes, ... }: {
+    imports = [ ./machines/${name}/definition.nix ];
+    deployment.tags = [ "local" "macmini" ];
+  };
+  gcp-worker-dfv7 = {
+    imports = [ ./machines/gcpWorker/definition.nix ];
+    deployment.tags = [ "gcp" ];
+    deployment.targetHost = "34.118.247.206";
+  };
+  gcp-worker-dw64 = {
+    imports = [ ./machines/gcpWorker/definition.nix ];
+    deployment.tags = [ "gcp" ];
+    deployment.targetHost = "35.234.68.55";
   };
 }
+// (mkNodePool {
+  names = with builtins; fromJSON (readFile "${self}/terraform/metal/oci_control.json");
+  module = {
+   # hqsw has 1 core not 2
+    imports = [ ./machines/ociControlWorker srvos.nixosModules.server ];
+    deployment.tags = [ "oci-control" ];
+    deployment.buildOnTarget = false;
+  };
+})

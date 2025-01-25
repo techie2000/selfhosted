@@ -1,5 +1,3 @@
-
-
 resource "nomad_acl_policy" "anonymous" {
   name        = "anonymous"
   description = "Anonymous (unauthenticated) policy"
@@ -44,4 +42,17 @@ resource "nomad_acl_policy" "immich-backup-read-buckets" {
   job_acl {
     job_id = "immich-db-backup"
   }
+}
+
+resource "nomad_acl_policy" "job-submitter" {
+  name      = "job-submitter"
+  rules_hcl = file("policies/job-submitter.hcl")
+  job_acl {
+    job_id = "services-go"
+  }
+}
+
+resource "nomad_node_pool" "control-plane" {
+  name = "control-plane"
+  description = "Nodes that participate in the control plane and already have high CPU load due to non-Nomad workloads"
 }
